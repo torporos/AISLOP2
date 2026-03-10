@@ -4,6 +4,7 @@
 #include <cmath>
 #include <vector>
 #include <queue>
+#include <algorithm>
 
 // Helper function for bilinear interpolation
 float BilinearInterpolate(float tx, float ty, float c00, float c10, float c01, float c11) {
@@ -12,25 +13,29 @@ float BilinearInterpolate(float tx, float ty, float c00, float c10, float c01, f
     return a * (1.0f - ty) + b * ty;
 }
 
-// Data structure for Dijkstra expansion
+// Data structure for Kingdom Dijkstra expansion
 struct ExpandNode {
     float cost;
     int x;
     int y;
     int kingdom_id;
 
-    // We want a min-heap, so greater cost means lower priority
     bool operator>(const ExpandNode& other) const {
         return cost > other.cost;
     }
 };
 
-// Helper structure for the Region subdivision pass
-struct RegionSeedPoint {
+// Data structure for Region Dijkstra expansion
+struct RegionExpandNode {
+    float cost;
     int x;
     int y;
     int region_id;
     int kingdom_id;
+
+    bool operator>(const RegionExpandNode& other) const {
+        return cost > other.cost;
+    }
 };
 
 // Calculates the cost to expand into a specific biome based on the kingdom's race
@@ -108,14 +113,12 @@ void WorldMap::GenerateWorld(unsigned int seed) {
         }
     }
 
-    // Clear previous regions and kingdoms since this is a pre-kingdom terrain generation pass
     kingdoms.clear();
     regions.clear();
 
     // 2. Upscale to 200x200 using bilinear interpolation and assign Biomes
     for (int y = 0; y < 200; ++y) {
         for (int x = 0; x < 200; ++x) {
-            // Map 200x200 coordinates to the 20x20 grid (scale factor = 10)
             float gx = x / 10.0f;
             float gy = y / 10.0f;
 
@@ -127,27 +130,24 @@ void WorldMap::GenerateWorld(unsigned int seed) {
             float tx = gx - x0;
             float ty = gy - y0;
 
-            // Interpolate Elevation
             float e00 = lowResElev[y0][x0];
             float e10 = lowResElev[y0][x1];
             float e01 = lowResElev[y1][x0];
             float e11 = lowResElev[y1][x1];
             float elev = BilinearInterpolate(tx, ty, e00, e10, e01, e11);
 
-            // Interpolate Moisture
             float m00 = lowResMoist[y0][x0];
             float m10 = lowResMoist[y0][x1];
             float m01 = lowResMoist[y1][x0];
             float m11 = lowResMoist[y1][x1];
             float moist = BilinearInterpolate(tx, ty, m00, m10, m01, m11);
 
-            // Initialize the tile
             Tile& tile = grid[y][x];
-            tile.kingdom_id = -1; // -1 denotes unclaimed land
+            tile.kingdom_id = -1; // Unclaimed
             tile.region_id = -1;
             tile.is_road = false;
 
-            // 3. Assign Biome based on intersection of Elevation and Moisture
+            // 3. Assign Biome
             if (elev < 0.25f) {
                 tile.biome = Biome::Desert;
                 tile.symbol = '-';
@@ -185,39 +185,38 @@ void WorldMap::GenerateWorld(unsigned int seed) {
     std::vector<std::vector<float>> min_cost(200, std::vector<float>(200, 1e9f));
 
     Biome preferredBiomes[6] = {
-        Biome::Plains,     // 0: Human
-        Biome::Forest,     // 1: Elf
-        Biome::Hills,      // 2: Gnome
-        Biome::Mountains,  // 3: Dwarf
-        Biome::Swamp,      // 4: Troll
-        Biome::Desert      // 5: Lizardman
+        Biome::Plains, Biome::Forest, Biome::Hills, 
+        Biome::Mountains, Biome::Swamp, Biome::Desert
     };
 
     for (int i = 0; i < 6; ++i) {
-        // Initialize Kingdom data
-        Kingdom k;
-        k.id = i;
-        k.primary_biome = preferredBiomes[i];
-        kingdoms[i] = k;
-
-        // Find a valid starting tile matching the preferred biome
         int sx, sy;
         while (true) {
             sx = coord_dist(gen);
             sy = coord_dist(gen);
 
-            // Ensure no two kingdoms spawn on the same tile and matches biome
             if (grid[sy][sx].biome == preferredBiomes[i] && grid[sy][sx].kingdom_id == -1) {
                 break;
             }
         }
 
-        // Seed the priority queue
+        Kingdom k;
+        k.id = i;
+        k.primary_biome = preferredBiomes[i];
+        
+        // Initialize bounding box perfectly around the seed
+        k.min_x = sx;
+        k.max_x = sx;
+        k.min_y = sy;
+        k.max_y = sy;
+        
+        kingdoms[i] = k;
+
         pq.push({0.0f, sx, sy, i});
         min_cost[sy][sx] = 0.0f;
     }
 
-    // 5. Multi-source Dijkstra Expansion
+    // 5. Multi-source Dijkstra Expansion for Kingdoms (with Bounding Box constraints)
     int dx[] = {0, 0, 1, -1};
     int dy[] = {1, -1, 0, 0};
 
@@ -225,22 +224,37 @@ void WorldMap::GenerateWorld(unsigned int seed) {
         ExpandNode current = pq.top();
         pq.pop();
 
-        // If this tile has already been claimed, skip
         if (grid[current.y][current.x].kingdom_id != -1) {
             continue;
         }
 
-        // Claim the tile
+        Kingdom& k_data = kingdoms[current.kingdom_id];
+        
+        // Finalize BB update
+        k_data.min_x = std::min(k_data.min_x, current.x);
+        k_data.max_x = std::max(k_data.max_x, current.x);
+        k_data.min_y = std::min(k_data.min_y, current.y);
+        k_data.max_y = std::max(k_data.max_y, current.y);
+
         grid[current.y][current.x].kingdom_id = current.kingdom_id;
 
-        // Expand to neighbors
         for (int i = 0; i < 4; ++i) {
             int nx = current.x + dx[i];
             int ny = current.y + dy[i];
 
-            // Check bounds and if tile is unclaimed
             if (nx >= 0 && nx < 200 && ny >= 0 && ny < 200) {
                 if (grid[ny][nx].kingdom_id == -1) {
+                    
+                    // Strict Viewport Constraint: Check BB before allowing expansion
+                    int proposed_min_x = std::min(k_data.min_x, nx);
+                    int proposed_max_x = std::max(k_data.max_x, nx);
+                    int proposed_min_y = std::min(k_data.min_y, ny);
+                    int proposed_max_y = std::max(k_data.max_y, ny);
+
+                    if ((proposed_max_x - proposed_min_x) > 68 || (proposed_max_y - proposed_min_y) > 28) {
+                        continue; // Skip, would cause kingdom to outgrow a 70x30 viewport
+                    }
+
                     float step_cost = GetTraversalCost(current.kingdom_id, grid[ny][nx].biome);
                     float total_cost = current.cost + step_cost;
 
@@ -253,18 +267,30 @@ void WorldMap::GenerateWorld(unsigned int seed) {
         }
     }
 
-    // 6. Subdivide Kingdoms into Regions
-    std::uniform_int_distribution<int> reg_dist(3, 5);
-    std::vector<RegionSeedPoint> region_seeds;
-    int next_region_id = 0;
+    // 6. Proportional Region Seeding
+    std::vector<int> kingdom_tile_counts(6, 0);
+    for (int y = 0; y < 200; ++y) {
+        for (int x = 0; x < 200; ++x) {
+            if (grid[y][x].kingdom_id != -1) {
+                kingdom_tile_counts[grid[y][x].kingdom_id]++;
+            }
+        }
+    }
 
+    std::priority_queue<RegionExpandNode, std::vector<RegionExpandNode>, std::greater<RegionExpandNode>> reg_pq;
+    std::vector<std::vector<float>> reg_min_cost(200, std::vector<float>(200, 1e9f));
+
+    int next_region_id = 0;
     for (int k = 0; k < 6; ++k) {
-        int num_regions = reg_dist(gen);
+        int count = kingdom_tile_counts[k];
+        int num_regions = std::max(12, count / 40);
+
         for (int r = 0; r < num_regions; ++r) {
             int rx, ry;
             bool valid = false;
             int attempts = 0;
-            // Ensure the region seed strictly falls within its parent kingdom's bounds
+            
+            // Seed strictly inside kingdom bounds
             while (!valid && attempts < 1000) {
                 rx = coord_dist(gen);
                 ry = coord_dist(gen);
@@ -276,53 +302,57 @@ void WorldMap::GenerateWorld(unsigned int seed) {
 
             if (!valid) continue;
 
-            region_seeds.push_back({rx, ry, next_region_id, k});
-
-            // Initialize the Region structure
             Region region;
             region.id = next_region_id;
             region.kingdom_id = k;
             regions[next_region_id] = region;
 
             kingdoms[k].region_ids.push_back(next_region_id);
+
+            reg_pq.push({0.0f, rx, ry, next_region_id, k});
+            reg_min_cost[ry][rx] = 0.0f;
             next_region_id++;
         }
     }
 
-    // 7. Second Voronoi Pass for Regions
-    for (int y = 0; y < 200; ++y) {
-        for (int x = 0; x < 200; ++x) {
-            int k_id = grid[y][x].kingdom_id;
+    // 7. Organic Region Expansion (Second Dijkstra Pass)
+    while (!reg_pq.empty()) {
+        auto current = reg_pq.top();
+        reg_pq.pop();
 
-            if (k_id == -1) continue; // Skip unclaimed
+        if (grid[current.y][current.x].region_id != -1) {
+            continue;
+        }
 
-            float min_dist = 1e9f;
-            int closest_region_id = -1;
+        grid[current.y][current.x].region_id = current.region_id;
 
-            for (const auto& rs : region_seeds) {
-                if (rs.kingdom_id == k_id) {
-                    float local_dx = static_cast<float>(x - rs.x);
-                    float local_dy = static_cast<float>(y - rs.y);
-                    float distance = std::sqrt(local_dx * local_dx + local_dy * local_dy);
+        for (int i = 0; i < 4; ++i) {
+            int nx = current.x + dx[i];
+            int ny = current.y + dy[i];
 
-                    if (distance < min_dist) {
-                        min_dist = distance;
-                        closest_region_id = rs.region_id;
+            if (nx >= 0 && nx < 200 && ny >= 0 && ny < 200) {
+                // Must belong to the exact same parent kingdom to prevent borders leaking
+                if (grid[ny][nx].kingdom_id == current.kingdom_id && grid[ny][nx].region_id == -1) {
+                    float step_cost = GetTraversalCost(current.kingdom_id, grid[ny][nx].biome);
+                    float total_cost = current.cost + step_cost;
+
+                    if (total_cost < reg_min_cost[ny][nx]) {
+                        reg_min_cost[ny][nx] = total_cost;
+                        reg_pq.push({total_cost, nx, ny, current.region_id, current.kingdom_id});
                     }
                 }
             }
-            grid[y][x].region_id = closest_region_id;
         }
     }
 
-    // 8. Geographic Features generation (Rivers and Ridges on borders)
+    // 8. Geographic Features generation (Rivers and Ridges on region borders)
     std::uniform_real_distribution<float> feature_chance(0.0f, 1.0f);
     std::uniform_int_distribution<int> feature_type(0, 1);
 
     for (int y = 1; y < 199; ++y) {
         for (int x = 1; x < 199; ++x) {
             int current_region = grid[y][x].region_id;
-
+            
             if (current_region == -1) continue;
 
             bool is_border = (grid[y-1][x].region_id != current_region ||
@@ -344,7 +374,7 @@ void WorldMap::GenerateWorld(unsigned int seed) {
         }
     }
 
-    // 9. POI Placement
+    // 9. POI Placement (using macro coordinates)
     std::uniform_int_distribution<int> poi_count_dist(2, 4);
     int next_poi_id = 0;
 
@@ -356,11 +386,11 @@ void WorldMap::GenerateWorld(unsigned int seed) {
             int px, py;
             bool valid = false;
             int attempts = 0;
-            // Find a valid tile in the region that isn't already a road or POI
+
             while (!valid && attempts < 1000) {
                 px = coord_dist(gen);
                 py = coord_dist(gen);
-                if (grid[py][px].region_id == region.id && !grid[py][px].is_road &&
+                if (grid[py][px].region_id == region.id && !grid[py][px].is_road && 
                     grid[py][px].symbol != 'O' && grid[py][px].symbol != 'V') {
                     valid = true;
                 }
@@ -371,17 +401,17 @@ void WorldMap::GenerateWorld(unsigned int seed) {
 
             POI new_poi;
             new_poi.id = next_poi_id++;
-            new_poi.x = px;
-            new_poi.y = py;
+            new_poi.macro_x = px;
+            new_poi.macro_y = py;
+            new_poi.local_x = 0; // Initialize high-res coordinates to defaults for now
+            new_poi.local_y = 0;
 
             if (i == 0) {
-                // First POI is always a Settlement
-                new_poi.symbol = 'O';
+                new_poi.symbol = 'O'; // Settlement
                 grid[py][px].symbol = 'O';
                 grid[py][px].color = Terminal::COLOR_WHITE;
             } else {
-                // Other POIs are Dungeons
-                new_poi.symbol = 'V';
+                new_poi.symbol = 'V'; // Dungeon
                 grid[py][px].symbol = 'V';
                 grid[py][px].color = Terminal::COLOR_RED;
             }
@@ -389,11 +419,11 @@ void WorldMap::GenerateWorld(unsigned int seed) {
             region.pois.push_back(new_poi);
         }
 
-        // 10. Road Generation (Minimum Spanning Tree)
+        // 10. Road Generation (Minimum Spanning Tree with macro coordinates)
         if (region.pois.size() >= 2) {
             std::vector<size_t> connected;
             std::vector<size_t> unconnected;
-
+            
             connected.push_back(0);
             for (size_t i = 1; i < region.pois.size(); ++i) {
                 unconnected.push_back(i);
@@ -401,7 +431,6 @@ void WorldMap::GenerateWorld(unsigned int seed) {
 
             std::vector<std::pair<size_t, size_t>> edges;
 
-            // Prim's algorithm for MST
             while (!unconnected.empty()) {
                 float min_dist = 1e9f;
                 size_t best_c = 0;
@@ -410,10 +439,10 @@ void WorldMap::GenerateWorld(unsigned int seed) {
                 for (size_t c : connected) {
                     for (size_t u_idx = 0; u_idx < unconnected.size(); ++u_idx) {
                         size_t u = unconnected[u_idx];
-                        float local_dx = static_cast<float>(region.pois[c].x - region.pois[u].x);
-                        float local_dy = static_cast<float>(region.pois[c].y - region.pois[u].y);
+                        float local_dx = static_cast<float>(region.pois[c].macro_x - region.pois[u].macro_x);
+                        float local_dy = static_cast<float>(region.pois[c].macro_y - region.pois[u].macro_y);
                         float dist_val = std::sqrt(local_dx * local_dx + local_dy * local_dy);
-
+                        
                         if (dist_val < min_dist) {
                             min_dist = dist_val;
                             best_c = c;
@@ -428,13 +457,12 @@ void WorldMap::GenerateWorld(unsigned int seed) {
                 unconnected.erase(unconnected.begin() + best_u_idx);
             }
 
-            // Draw paths for the established edges
             for (const auto& edge : edges) {
                 POI& start = region.pois[edge.first];
                 POI& end = region.pois[edge.second];
 
-                int curX = start.x;
-                int curY = start.y;
+                int curX = start.macro_x;
+                int curY = start.macro_y;
 
                 auto drawRoad = [&](int x, int y) {
                     if (grid[y][x].symbol != 'O' && grid[y][x].symbol != 'V') {
@@ -444,17 +472,15 @@ void WorldMap::GenerateWorld(unsigned int seed) {
                     }
                 };
 
-                // L-Shaped Manhattan Path
-                while (curX != end.x) {
-                    curX += (end.x > curX) ? 1 : -1;
+                while (curX != end.macro_x) {
+                    curX += (end.macro_x > curX) ? 1 : -1;
                     drawRoad(curX, curY);
                 }
-                while (curY != end.y) {
-                    curY += (end.y > curY) ? 1 : -1;
+                while (curY != end.macro_y) {
+                    curY += (end.macro_y > curY) ? 1 : -1;
                     drawRoad(curX, curY);
                 }
 
-                // Update Graph Connectivity
                 start.connected_pois.push_back(end.id);
                 end.connected_pois.push_back(start.id);
             }
