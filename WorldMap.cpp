@@ -100,12 +100,10 @@ void WorldMap::GenerateWorld(unsigned int seed) {
     std::uniform_real_distribution<float> dist(0.0f, 1.0f);
     std::uniform_int_distribution<int> coord_dist(0, 199);
 
-    // Grid size for the low-resolution noise (20x20, plus 1 for boundary interpolation)
     const int noiseSize = 21;
     std::vector<std::vector<float>> lowResElev(noiseSize, std::vector<float>(noiseSize));
     std::vector<std::vector<float>> lowResMoist(noiseSize, std::vector<float>(noiseSize));
 
-    // 1. Generate low-resolution random float grids for Elevation and Moisture
     for (int y = 0; y < noiseSize; ++y) {
         for (int x = 0; x < noiseSize; ++x) {
             lowResElev[y][x] = dist(gen);
@@ -116,7 +114,6 @@ void WorldMap::GenerateWorld(unsigned int seed) {
     kingdoms.clear();
     regions.clear();
 
-    // 2. Upscale to 200x200 using bilinear interpolation and assign Biomes
     for (int y = 0; y < 200; ++y) {
         for (int x = 0; x < 200; ++x) {
             float gx = x / 10.0f;
@@ -147,7 +144,6 @@ void WorldMap::GenerateWorld(unsigned int seed) {
             tile.region_id = -1;
             tile.is_road = false;
 
-            // 3. Assign Biome
             if (elev < 0.25f) {
                 tile.biome = Biome::Desert;
                 tile.symbol = '-';
@@ -180,12 +176,11 @@ void WorldMap::GenerateWorld(unsigned int seed) {
         }
     }
 
-    // 4. Kingdom Seeding
     std::priority_queue<ExpandNode, std::vector<ExpandNode>, std::greater<ExpandNode>> pq;
     std::vector<std::vector<float>> min_cost(200, std::vector<float>(200, 1e9f));
 
     Biome preferredBiomes[6] = {
-        Biome::Plains, Biome::Forest, Biome::Hills, 
+        Biome::Plains, Biome::Forest, Biome::Hills,
         Biome::Mountains, Biome::Swamp, Biome::Desert
     };
 
@@ -203,20 +198,17 @@ void WorldMap::GenerateWorld(unsigned int seed) {
         Kingdom k;
         k.id = i;
         k.primary_biome = preferredBiomes[i];
-        
-        // Initialize bounding box perfectly around the seed
         k.min_x = sx;
         k.max_x = sx;
         k.min_y = sy;
         k.max_y = sy;
-        
+
         kingdoms[i] = k;
 
         pq.push({0.0f, sx, sy, i});
         min_cost[sy][sx] = 0.0f;
     }
 
-    // 5. Multi-source Dijkstra Expansion for Kingdoms (with Bounding Box constraints)
     int dx[] = {0, 0, 1, -1};
     int dy[] = {1, -1, 0, 0};
 
@@ -229,8 +221,7 @@ void WorldMap::GenerateWorld(unsigned int seed) {
         }
 
         Kingdom& k_data = kingdoms[current.kingdom_id];
-        
-        // Finalize BB update
+
         k_data.min_x = std::min(k_data.min_x, current.x);
         k_data.max_x = std::max(k_data.max_x, current.x);
         k_data.min_y = std::min(k_data.min_y, current.y);
@@ -244,15 +235,14 @@ void WorldMap::GenerateWorld(unsigned int seed) {
 
             if (nx >= 0 && nx < 200 && ny >= 0 && ny < 200) {
                 if (grid[ny][nx].kingdom_id == -1) {
-                    
-                    // Strict Viewport Constraint: Check BB before allowing expansion
+
                     int proposed_min_x = std::min(k_data.min_x, nx);
                     int proposed_max_x = std::max(k_data.max_x, nx);
                     int proposed_min_y = std::min(k_data.min_y, ny);
                     int proposed_max_y = std::max(k_data.max_y, ny);
 
                     if ((proposed_max_x - proposed_min_x) > 68 || (proposed_max_y - proposed_min_y) > 28) {
-                        continue; // Skip, would cause kingdom to outgrow a 70x30 viewport
+                        continue;
                     }
 
                     float step_cost = GetTraversalCost(current.kingdom_id, grid[ny][nx].biome);
@@ -267,7 +257,6 @@ void WorldMap::GenerateWorld(unsigned int seed) {
         }
     }
 
-    // 6. Proportional Region Seeding
     std::vector<int> kingdom_tile_counts(6, 0);
     for (int y = 0; y < 200; ++y) {
         for (int x = 0; x < 200; ++x) {
@@ -289,8 +278,7 @@ void WorldMap::GenerateWorld(unsigned int seed) {
             int rx, ry;
             bool valid = false;
             int attempts = 0;
-            
-            // Seed strictly inside kingdom bounds
+
             while (!valid && attempts < 1000) {
                 rx = coord_dist(gen);
                 ry = coord_dist(gen);
@@ -315,7 +303,6 @@ void WorldMap::GenerateWorld(unsigned int seed) {
         }
     }
 
-    // 7. Organic Region Expansion (Second Dijkstra Pass)
     while (!reg_pq.empty()) {
         auto current = reg_pq.top();
         reg_pq.pop();
@@ -331,7 +318,6 @@ void WorldMap::GenerateWorld(unsigned int seed) {
             int ny = current.y + dy[i];
 
             if (nx >= 0 && nx < 200 && ny >= 0 && ny < 200) {
-                // Must belong to the exact same parent kingdom to prevent borders leaking
                 if (grid[ny][nx].kingdom_id == current.kingdom_id && grid[ny][nx].region_id == -1) {
                     float step_cost = GetTraversalCost(current.kingdom_id, grid[ny][nx].biome);
                     float total_cost = current.cost + step_cost;
@@ -345,14 +331,13 @@ void WorldMap::GenerateWorld(unsigned int seed) {
         }
     }
 
-    // 8. Geographic Features generation (Rivers and Ridges on region borders)
     std::uniform_real_distribution<float> feature_chance(0.0f, 1.0f);
     std::uniform_int_distribution<int> feature_type(0, 1);
 
     for (int y = 1; y < 199; ++y) {
         for (int x = 1; x < 199; ++x) {
             int current_region = grid[y][x].region_id;
-            
+
             if (current_region == -1) continue;
 
             bool is_border = (grid[y-1][x].region_id != current_region ||
@@ -367,31 +352,95 @@ void WorldMap::GenerateWorld(unsigned int seed) {
                         grid[y][x].color = Terminal::COLOR_BLUE;
                     } else {
                         grid[y][x].symbol = '^';
-                        grid[y][x].color = "\033[90m"; // Dark gray
+                        grid[y][x].color = "\033[90m";
                     }
                 }
             }
         }
     }
 
-    // 9. POI Placement (using macro coordinates)
+    // 9. Local Grid Upscaling, POI Placement, and MST Roads
     std::uniform_int_distribution<int> poi_count_dist(2, 4);
-    int next_poi_id = 0;
+    std::uniform_real_distribution<float> noise_dist(0.0f, 1.0f);
 
     for (auto& pair : regions) {
         Region& region = pair.second;
+
+        // Find macro bounding box for this specific region
+        int min_mx = 200, max_mx = -1;
+        int min_my = 200, max_my = -1;
+
+        for (int y = 0; y < 200; ++y) {
+            for (int x = 0; x < 200; ++x) {
+                if (grid[y][x].region_id == region.id) {
+                    min_mx = std::min(min_mx, x);
+                    max_mx = std::max(max_mx, x);
+                    min_my = std::min(min_my, y);
+                    max_my = std::max(max_my, y);
+                }
+            }
+        }
+
+        if (max_mx == -1) continue; // Safety guard for empty regions
+
+        float scale_x = static_cast<float>(max_mx - min_mx + 1) / 70.0f;
+        float scale_y = static_cast<float>(max_my - min_my + 1) / 30.0f;
+
+        // Upscale macro biome to the local high-res grid
+        for (int ly = 0; ly < 30; ++ly) {
+            for (int lx = 0; lx < 70; ++lx) {
+                int mx = min_mx + static_cast<int>(lx * scale_x);
+                int my = min_my + static_cast<int>(ly * scale_y);
+
+                mx = std::max(0, std::min(mx, 199));
+                my = std::max(0, std::min(my, 199));
+
+                LocalTile& ltile = region.local_grid[ly][lx];
+                const Tile& mtile = grid[my][mx];
+
+                if (mtile.region_id == region.id) {
+                    ltile.in_region = true;
+                    ltile.biome = mtile.biome;
+                    ltile.color = mtile.color;
+                    ltile.is_road = false;
+
+                    // Add organic terrain noise to make the upscaled area feel detailed
+                    if (noise_dist(gen) < 0.3f) {
+                        switch(ltile.biome) {
+                            case Biome::Plains: ltile.symbol = ','; break;
+                            case Biome::Forest: ltile.symbol = 't'; break;
+                            case Biome::Hills: ltile.symbol = 'm'; break;
+                            case Biome::Mountains: ltile.symbol = 'A'; break;
+                            case Biome::Swamp: ltile.symbol = '='; break;
+                            case Biome::Desert: ltile.symbol = '_'; break;
+                        }
+                    } else {
+                        ltile.symbol = mtile.symbol;
+                    }
+                } else {
+                    ltile.in_region = false;
+                    ltile.symbol = ' ';
+                    ltile.color = "\033[90m"; // Dark gray hash
+                }
+            }
+        }
+
+        // Place POIs on the local grid
         int num_pois = poi_count_dist(gen);
+        std::uniform_int_distribution<int> local_x_dist(0, 69);
+        std::uniform_int_distribution<int> local_y_dist(0, 29);
 
         for (int i = 0; i < num_pois; ++i) {
-            int px, py;
+            int lx, ly;
             bool valid = false;
             int attempts = 0;
 
             while (!valid && attempts < 1000) {
-                px = coord_dist(gen);
-                py = coord_dist(gen);
-                if (grid[py][px].region_id == region.id && !grid[py][px].is_road && 
-                    grid[py][px].symbol != 'O' && grid[py][px].symbol != 'V') {
+                lx = local_x_dist(gen);
+                ly = local_y_dist(gen);
+                LocalTile& ltile = region.local_grid[ly][lx];
+
+                if (ltile.in_region && !ltile.is_road && ltile.symbol != 'O' && ltile.symbol != 'V') {
                     valid = true;
                 }
                 attempts++;
@@ -401,29 +450,35 @@ void WorldMap::GenerateWorld(unsigned int seed) {
 
             POI new_poi;
             new_poi.id = next_poi_id++;
-            new_poi.macro_x = px;
-            new_poi.macro_y = py;
-            new_poi.local_x = 0; // Initialize high-res coordinates to defaults for now
-            new_poi.local_y = 0;
+            new_poi.local_x = lx;
+            new_poi.local_y = ly;
+            new_poi.macro_x = min_mx + static_cast<int>(lx * scale_x);
+            new_poi.macro_y = min_my + static_cast<int>(ly * scale_y);
+
+            LocalTile& ltile = region.local_grid[ly][lx];
 
             if (i == 0) {
                 new_poi.symbol = 'O'; // Settlement
-                grid[py][px].symbol = 'O';
-                grid[py][px].color = Terminal::COLOR_WHITE;
+                ltile.symbol = 'O';
+                ltile.color = Terminal::COLOR_WHITE;
             } else {
                 new_poi.symbol = 'V'; // Dungeon
-                grid[py][px].symbol = 'V';
-                grid[py][px].color = Terminal::COLOR_RED;
+                ltile.symbol = 'V';
+                ltile.color = Terminal::COLOR_RED;
             }
+
+            // Mark the macro grid purely for macro rendering views
+            grid[new_poi.macro_y][new_poi.macro_x].symbol = new_poi.symbol;
+            grid[new_poi.macro_y][new_poi.macro_x].color = ltile.color;
 
             region.pois.push_back(new_poi);
         }
 
-        // 10. Road Generation (Minimum Spanning Tree with macro coordinates)
+        // Generate Roads using local coordinates
         if (region.pois.size() >= 2) {
             std::vector<size_t> connected;
             std::vector<size_t> unconnected;
-            
+
             connected.push_back(0);
             for (size_t i = 1; i < region.pois.size(); ++i) {
                 unconnected.push_back(i);
@@ -439,10 +494,10 @@ void WorldMap::GenerateWorld(unsigned int seed) {
                 for (size_t c : connected) {
                     for (size_t u_idx = 0; u_idx < unconnected.size(); ++u_idx) {
                         size_t u = unconnected[u_idx];
-                        float local_dx = static_cast<float>(region.pois[c].macro_x - region.pois[u].macro_x);
-                        float local_dy = static_cast<float>(region.pois[c].macro_y - region.pois[u].macro_y);
-                        float dist_val = std::sqrt(local_dx * local_dx + local_dy * local_dy);
-                        
+                        float dx = static_cast<float>(region.pois[c].local_x - region.pois[u].local_x);
+                        float dy = static_cast<float>(region.pois[c].local_y - region.pois[u].local_y);
+                        float dist_val = std::sqrt(dx * dx + dy * dy);
+
                         if (dist_val < min_dist) {
                             min_dist = dist_val;
                             best_c = c;
@@ -461,23 +516,24 @@ void WorldMap::GenerateWorld(unsigned int seed) {
                 POI& start = region.pois[edge.first];
                 POI& end = region.pois[edge.second];
 
-                int curX = start.macro_x;
-                int curY = start.macro_y;
+                int curX = start.local_x;
+                int curY = start.local_y;
 
                 auto drawRoad = [&](int x, int y) {
-                    if (grid[y][x].symbol != 'O' && grid[y][x].symbol != 'V') {
-                        grid[y][x].symbol = '+';
-                        grid[y][x].color = Terminal::COLOR_YELLOW;
-                        grid[y][x].is_road = true;
+                    LocalTile& ltile = region.local_grid[y][x];
+                    if (ltile.symbol != 'O' && ltile.symbol != 'V') {
+                        ltile.symbol = '+';
+                        ltile.color = Terminal::COLOR_YELLOW;
+                        ltile.is_road = true;
                     }
                 };
 
-                while (curX != end.macro_x) {
-                    curX += (end.macro_x > curX) ? 1 : -1;
+                while (curX != end.local_x) {
+                    curX += (end.local_x > curX) ? 1 : -1;
                     drawRoad(curX, curY);
                 }
-                while (curY != end.macro_y) {
-                    curY += (end.macro_y > curY) ? 1 : -1;
+                while (curY != end.local_y) {
+                    curY += (end.local_y > curY) ? 1 : -1;
                     drawRoad(curX, curY);
                 }
 
