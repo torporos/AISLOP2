@@ -38,15 +38,15 @@ int main() {
 
     // 3. Create the Player Entity
     Entity player = gCoordinator.CreateEntity();
-
+    
     // Spawn at the first POI of Region 0
     int start_kingdom_id = world.regions[0].kingdom_id;
     int start_region_id = world.regions[0].id;
     int start_poi_id = world.regions[0].pois[0].id;
-    int start_x = world.regions[0].pois[0].x;
-    int start_y = world.regions[0].pois[0].y;
+    int start_local_x = world.regions[0].pois[0].local_x;
+    int start_local_y = world.regions[0].pois[0].local_y;
 
-    gCoordinator.AddComponent(player, Position{start_x, start_y});
+    gCoordinator.AddComponent(player, Position{start_local_x, start_local_y});
     gCoordinator.AddComponent(player, Renderable{'@', Terminal::COLOR_GREEN});
     gCoordinator.AddComponent(player, PlayerNavigation{start_kingdom_id, start_region_id, start_poi_id});
 
@@ -56,19 +56,31 @@ int main() {
         auto& nav = gCoordinator.GetComponent<PlayerNavigation>(player);
         auto& pos = gCoordinator.GetComponent<Position>(player);
 
-        // Synchronize physical position with current POI logic
+        // Fetch the current POI structure using the ID
         POI current_poi = GetPOIById(world, nav.current_poi_id);
-        pos.x = current_poi.x;
-        pos.y = current_poi.y;
-        nav.current_region_id = world.grid[pos.y][pos.x].region_id;
-        nav.current_kingdom_id = world.grid[pos.y][pos.x].kingdom_id;
+
+        // Keep hierarchy IDs synchronized using the macro coordinates
+        nav.current_region_id = world.grid[current_poi.macro_y][current_poi.macro_x].region_id;
+        nav.current_kingdom_id = world.grid[current_poi.macro_y][current_poi.macro_x].kingdom_id;
+
+        // Dynamically assign physical Position component based on the active map scale
+        if (currentState == GameState::RegionalMap || currentState == GameState::LocalMap) {
+            pos.x = current_poi.local_x;
+            pos.y = current_poi.local_y;
+        } else {
+            pos.x = current_poi.macro_x;
+            pos.y = current_poi.macro_y;
+        }
 
         // Render the current frame based on state
         if (currentState == GameState::RegionalMap) {
+            // Region Renderer uses the 70x30 local_grid and micro-coordinates
             MapRenderer::RenderRegion(world, nav.current_region_id, pos.x, pos.y);
         } else if (currentState == GameState::KingdomMap) {
-            MapRenderer::RenderKingdomMap(world, nav.current_kingdom_id, nav.current_region_id);
+            // Kingdom Renderer maps 1:1 to macro-coordinates
+            MapRenderer::RenderKingdomMap(world, nav.current_kingdom_id, pos.x, pos.y);
         } else if (currentState == GameState::ContinentalMap) {
+            // Continental Map renders the subsampled grid
             MapRenderer::RenderContinentalMap(world, nav.current_kingdom_id, pos.x, pos.y);
         } else {
             // Placeholder: Clear the screen for Local maps
@@ -105,15 +117,16 @@ int main() {
                 currentState = GameState::LocalMap;
             }
         } else if (currentState == GameState::RegionalMap && (input == 'w' || input == 'a' || input == 's' || input == 'd')) {
-            // Node-based Navigation Logic for Regional Map
+            // Node-based Navigation Logic using High-Res Local Coordinates
             int best_poi_id = nav.current_poi_id;
             int max_diff = 0;
 
             for (int connected_id : current_poi.connected_pois) {
                 POI connected_poi = GetPOIById(world, connected_id);
-
-                int dx = connected_poi.x - current_poi.x;
-                int dy = connected_poi.y - current_poi.y;
+                
+                // Compare relative spatial direction on the 70x30 local grid
+                int dx = connected_poi.local_x - current_poi.local_x;
+                int dy = connected_poi.local_y - current_poi.local_y;
 
                 if (input == 'd' && dx > 0 && dx > max_diff) {
                     best_poi_id = connected_id;
@@ -129,7 +142,7 @@ int main() {
                     max_diff = -dy;
                 }
             }
-
+            
             nav.current_poi_id = best_poi_id;
         }
     }
