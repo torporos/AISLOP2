@@ -25,6 +25,14 @@ struct ExpandNode {
     }
 };
 
+// Helper structure for the Region subdivision pass
+struct RegionSeedPoint {
+    int x;
+    int y;
+    int region_id;
+    int kingdom_id;
+};
+
 // Calculates the cost to expand into a specific biome based on the kingdom's race
 float GetTraversalCost(int kingdom_id, Biome biome) {
     // 0: Human, 1: Elf, 2: Gnome, 3: Dwarf, 4: Troll, 5: Lizardman
@@ -241,6 +249,214 @@ void WorldMap::GenerateWorld(unsigned int seed) {
                         pq.push({total_cost, nx, ny, current.kingdom_id});
                     }
                 }
+            }
+        }
+    }
+
+    // 6. Subdivide Kingdoms into Regions
+    std::uniform_int_distribution<int> reg_dist(3, 5);
+    std::vector<RegionSeedPoint> region_seeds;
+    int next_region_id = 0;
+
+    for (int k = 0; k < 6; ++k) {
+        int num_regions = reg_dist(gen);
+        for (int r = 0; r < num_regions; ++r) {
+            int rx, ry;
+            bool valid = false;
+            int attempts = 0;
+            // Ensure the region seed strictly falls within its parent kingdom's bounds
+            while (!valid && attempts < 1000) {
+                rx = coord_dist(gen);
+                ry = coord_dist(gen);
+                if (grid[ry][rx].kingdom_id == k) {
+                    valid = true;
+                }
+                attempts++;
+            }
+
+            if (!valid) continue;
+
+            region_seeds.push_back({rx, ry, next_region_id, k});
+
+            // Initialize the Region structure
+            Region region;
+            region.id = next_region_id;
+            region.kingdom_id = k;
+            regions[next_region_id] = region;
+
+            kingdoms[k].region_ids.push_back(next_region_id);
+            next_region_id++;
+        }
+    }
+
+    // 7. Second Voronoi Pass for Regions
+    for (int y = 0; y < 200; ++y) {
+        for (int x = 0; x < 200; ++x) {
+            int k_id = grid[y][x].kingdom_id;
+
+            if (k_id == -1) continue; // Skip unclaimed
+
+            float min_dist = 1e9f;
+            int closest_region_id = -1;
+
+            for (const auto& rs : region_seeds) {
+                if (rs.kingdom_id == k_id) {
+                    float local_dx = static_cast<float>(x - rs.x);
+                    float local_dy = static_cast<float>(y - rs.y);
+                    float distance = std::sqrt(local_dx * local_dx + local_dy * local_dy);
+
+                    if (distance < min_dist) {
+                        min_dist = distance;
+                        closest_region_id = rs.region_id;
+                    }
+                }
+            }
+            grid[y][x].region_id = closest_region_id;
+        }
+    }
+
+    // 8. Geographic Features generation (Rivers and Ridges on borders)
+    std::uniform_real_distribution<float> feature_chance(0.0f, 1.0f);
+    std::uniform_int_distribution<int> feature_type(0, 1);
+
+    for (int y = 1; y < 199; ++y) {
+        for (int x = 1; x < 199; ++x) {
+            int current_region = grid[y][x].region_id;
+
+            if (current_region == -1) continue;
+
+            bool is_border = (grid[y-1][x].region_id != current_region ||
+                              grid[y+1][x].region_id != current_region ||
+                              grid[y][x-1].region_id != current_region ||
+                              grid[y][x+1].region_id != current_region);
+
+            if (is_border) {
+                if (feature_chance(gen) < 0.30f) {
+                    if (feature_type(gen) == 0) {
+                        grid[y][x].symbol = '~';
+                        grid[y][x].color = Terminal::COLOR_BLUE;
+                    } else {
+                        grid[y][x].symbol = '^';
+                        grid[y][x].color = "\033[90m"; // Dark gray
+                    }
+                }
+            }
+        }
+    }
+
+    // 9. POI Placement
+    std::uniform_int_distribution<int> poi_count_dist(2, 4);
+    int next_poi_id = 0;
+
+    for (auto& pair : regions) {
+        Region& region = pair.second;
+        int num_pois = poi_count_dist(gen);
+
+        for (int i = 0; i < num_pois; ++i) {
+            int px, py;
+            bool valid = false;
+            int attempts = 0;
+            // Find a valid tile in the region that isn't already a road or POI
+            while (!valid && attempts < 1000) {
+                px = coord_dist(gen);
+                py = coord_dist(gen);
+                if (grid[py][px].region_id == region.id && !grid[py][px].is_road &&
+                    grid[py][px].symbol != 'O' && grid[py][px].symbol != 'V') {
+                    valid = true;
+                }
+                attempts++;
+            }
+
+            if (!valid) continue;
+
+            POI new_poi;
+            new_poi.id = next_poi_id++;
+            new_poi.x = px;
+            new_poi.y = py;
+
+            if (i == 0) {
+                // First POI is always a Settlement
+                new_poi.symbol = 'O';
+                grid[py][px].symbol = 'O';
+                grid[py][px].color = Terminal::COLOR_WHITE;
+            } else {
+                // Other POIs are Dungeons
+                new_poi.symbol = 'V';
+                grid[py][px].symbol = 'V';
+                grid[py][px].color = Terminal::COLOR_RED;
+            }
+
+            region.pois.push_back(new_poi);
+        }
+
+        // 10. Road Generation (Minimum Spanning Tree)
+        if (region.pois.size() >= 2) {
+            std::vector<size_t> connected;
+            std::vector<size_t> unconnected;
+
+            connected.push_back(0);
+            for (size_t i = 1; i < region.pois.size(); ++i) {
+                unconnected.push_back(i);
+            }
+
+            std::vector<std::pair<size_t, size_t>> edges;
+
+            // Prim's algorithm for MST
+            while (!unconnected.empty()) {
+                float min_dist = 1e9f;
+                size_t best_c = 0;
+                size_t best_u_idx = 0;
+
+                for (size_t c : connected) {
+                    for (size_t u_idx = 0; u_idx < unconnected.size(); ++u_idx) {
+                        size_t u = unconnected[u_idx];
+                        float local_dx = static_cast<float>(region.pois[c].x - region.pois[u].x);
+                        float local_dy = static_cast<float>(region.pois[c].y - region.pois[u].y);
+                        float dist_val = std::sqrt(local_dx * local_dx + local_dy * local_dy);
+
+                        if (dist_val < min_dist) {
+                            min_dist = dist_val;
+                            best_c = c;
+                            best_u_idx = u_idx;
+                        }
+                    }
+                }
+
+                size_t best_u = unconnected[best_u_idx];
+                edges.push_back({best_c, best_u});
+                connected.push_back(best_u);
+                unconnected.erase(unconnected.begin() + best_u_idx);
+            }
+
+            // Draw paths for the established edges
+            for (const auto& edge : edges) {
+                POI& start = region.pois[edge.first];
+                POI& end = region.pois[edge.second];
+
+                int curX = start.x;
+                int curY = start.y;
+
+                auto drawRoad = [&](int x, int y) {
+                    if (grid[y][x].symbol != 'O' && grid[y][x].symbol != 'V') {
+                        grid[y][x].symbol = '+';
+                        grid[y][x].color = Terminal::COLOR_YELLOW;
+                        grid[y][x].is_road = true;
+                    }
+                };
+
+                // L-Shaped Manhattan Path
+                while (curX != end.x) {
+                    curX += (end.x > curX) ? 1 : -1;
+                    drawRoad(curX, curY);
+                }
+                while (curY != end.y) {
+                    curY += (end.y > curY) ? 1 : -1;
+                    drawRoad(curX, curY);
+                }
+
+                // Update Graph Connectivity
+                start.connected_pois.push_back(end.id);
+                end.connected_pois.push_back(start.id);
             }
         }
     }
