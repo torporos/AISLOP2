@@ -88,26 +88,35 @@ void MapRenderer::RenderContinentalMap(const WorldMap& map, int player_kingdom_i
             const Tile& tile = map.grid[map_y][map_x];
             int current_kingdom = tile.kingdom_id;
 
-            // Border Detection: Check the 4 immediate neighbors in the map.grid
+            // Border Detection: Check all 8 adjacent tiles in the downsampled terminal grid
             bool is_border = false;
             if (current_kingdom != -1) {
-                int dx[] = {0, 0, 1, -1};
-                int dy[] = {1, -1, 0, 0};
-                for (int i = 0; i < 4; ++i) {
-                    int nx = map_x + dx[i];
-                    int ny = map_y + dy[i];
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        if (dx == 0 && dy == 0) continue;
 
-                    // If neighbor is within bounds and belongs to a different kingdom, we have a border
-                    if (nx >= 0 && nx < 200 && ny >= 0 && ny < 200) {
-                        if (map.grid[ny][nx].kingdom_id != current_kingdom) {
+                        int n_term_x = term_x + dx;
+                        int n_term_y = term_y + dy;
+
+                        // Calculate what high-res map coordinates these terminal neighbors correspond to
+                        if (n_term_x >= 0 && n_term_x < viewportWidth && n_term_y >= 0 && n_term_y < viewportHeight) {
+                            int n_map_x = static_cast<int>(n_term_x * 2.8f);
+                            int n_map_y = static_cast<int>(n_term_y * 6.6f);
+
+                            if (n_map_x >= 200) n_map_x = 199;
+                            if (n_map_y >= 200) n_map_y = 199;
+
+                            if (map.grid[n_map_y][n_map_x].kingdom_id != current_kingdom) {
+                                is_border = true;
+                                break;
+                            }
+                        } else {
+                            // Edge of the viewport/map is also a border
                             is_border = true;
                             break;
                         }
-                    } else {
-                        // Edge of the map is also a border
-                        is_border = true;
-                        break;
                     }
+                    if (is_border) break;
                 }
             }
 
