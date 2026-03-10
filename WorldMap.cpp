@@ -362,6 +362,7 @@ void WorldMap::GenerateWorld(unsigned int seed) {
     // 9. Local Grid Upscaling, POI Placement, and MST Roads
     std::uniform_int_distribution<int> poi_count_dist(2, 4);
     std::uniform_real_distribution<float> noise_dist(0.0f, 1.0f);
+    int next_poi_id = 0; // Fix: Declared next_poi_id to resolve scope compilation error
 
     for (auto& pair : regions) {
         Region& region = pair.second;
