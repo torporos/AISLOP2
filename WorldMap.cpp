@@ -40,7 +40,6 @@ struct RegionExpandNode {
 
 // Calculates the cost to expand into a specific biome based on the kingdom's race
 float GetTraversalCost(int kingdom_id, Biome biome) {
-    // 0: Human, 1: Elf, 2: Gnome, 3: Dwarf, 4: Troll, 5: Lizardman
     switch (kingdom_id) {
         case 0: // Human (Plains preferred)
             if (biome == Biome::Plains) return 1.0f;
@@ -91,11 +90,10 @@ float GetTraversalCost(int kingdom_id, Biome biome) {
             if (biome == Biome::Mountains) return 10.0f;
             break;
     }
-    return 10.0f; // Fallback cost
+    return 10.0f; 
 }
 
 void WorldMap::GenerateWorld(unsigned int seed) {
-    // Initialize standard C++ random number generator
     std::mt19937 gen(seed);
     std::uniform_real_distribution<float> dist(0.0f, 1.0f);
     std::uniform_int_distribution<int> coord_dist(0, 199);
@@ -140,36 +138,36 @@ void WorldMap::GenerateWorld(unsigned int seed) {
             float moist = BilinearInterpolate(tx, ty, m00, m10, m01, m11);
 
             Tile& tile = grid[y][x];
-            tile.kingdom_id = -1; // Unclaimed
+            tile.kingdom_id = -1;
             tile.region_id = -1;
             tile.is_road = false;
 
             if (elev < 0.25f) {
                 tile.biome = Biome::Desert;
-                tile.symbol = '-';
+                tile.symbol = "-";
                 tile.color = "\033[93m";
             } else if (elev >= 0.65f) {
                 if (moist < 0.5f) {
                     tile.biome = Biome::Mountains;
-                    tile.symbol = '^';
+                    tile.symbol = "^";
                     tile.color = Terminal::COLOR_WHITE;
                 } else {
                     tile.biome = Biome::Hills;
-                    tile.symbol = 'n';
+                    tile.symbol = "n";
                     tile.color = Terminal::COLOR_YELLOW;
                 }
             } else {
                 if (moist >= 0.66f) {
                     tile.biome = Biome::Swamp;
-                    tile.symbol = '~';
+                    tile.symbol = "~";
                     tile.color = Terminal::COLOR_GREEN;
                 } else if (moist >= 0.33f) {
                     tile.biome = Biome::Forest;
-                    tile.symbol = 'T';
+                    tile.symbol = "T";
                     tile.color = "\033[92m";
                 } else {
                     tile.biome = Biome::Plains;
-                    tile.symbol = '.';
+                    tile.symbol = ".";
                     tile.color = Terminal::COLOR_YELLOW;
                 }
             }
@@ -180,7 +178,7 @@ void WorldMap::GenerateWorld(unsigned int seed) {
     std::vector<std::vector<float>> min_cost(200, std::vector<float>(200, 1e9f));
 
     Biome preferredBiomes[6] = {
-        Biome::Plains, Biome::Forest, Biome::Hills,
+        Biome::Plains, Biome::Forest, Biome::Hills, 
         Biome::Mountains, Biome::Swamp, Biome::Desert
     };
 
@@ -202,7 +200,7 @@ void WorldMap::GenerateWorld(unsigned int seed) {
         k.max_x = sx;
         k.min_y = sy;
         k.max_y = sy;
-
+        
         kingdoms[i] = k;
 
         pq.push({0.0f, sx, sy, i});
@@ -221,7 +219,7 @@ void WorldMap::GenerateWorld(unsigned int seed) {
         }
 
         Kingdom& k_data = kingdoms[current.kingdom_id];
-
+        
         k_data.min_x = std::min(k_data.min_x, current.x);
         k_data.max_x = std::max(k_data.max_x, current.x);
         k_data.min_y = std::min(k_data.min_y, current.y);
@@ -235,14 +233,14 @@ void WorldMap::GenerateWorld(unsigned int seed) {
 
             if (nx >= 0 && nx < 200 && ny >= 0 && ny < 200) {
                 if (grid[ny][nx].kingdom_id == -1) {
-
+                    
                     int proposed_min_x = std::min(k_data.min_x, nx);
                     int proposed_max_x = std::max(k_data.max_x, nx);
                     int proposed_min_y = std::min(k_data.min_y, ny);
                     int proposed_max_y = std::max(k_data.max_y, ny);
 
                     if ((proposed_max_x - proposed_min_x) > 68 || (proposed_max_y - proposed_min_y) > 28) {
-                        continue;
+                        continue; 
                     }
 
                     float step_cost = GetTraversalCost(current.kingdom_id, grid[ny][nx].biome);
@@ -278,7 +276,7 @@ void WorldMap::GenerateWorld(unsigned int seed) {
             int rx, ry;
             bool valid = false;
             int attempts = 0;
-
+            
             while (!valid && attempts < 1000) {
                 rx = coord_dist(gen);
                 ry = coord_dist(gen);
@@ -337,7 +335,7 @@ void WorldMap::GenerateWorld(unsigned int seed) {
     for (int y = 1; y < 199; ++y) {
         for (int x = 1; x < 199; ++x) {
             int current_region = grid[y][x].region_id;
-
+            
             if (current_region == -1) continue;
 
             bool is_border = (grid[y-1][x].region_id != current_region ||
@@ -348,21 +346,28 @@ void WorldMap::GenerateWorld(unsigned int seed) {
             if (is_border) {
                 if (feature_chance(gen) < 0.30f) {
                     if (feature_type(gen) == 0) {
-                        grid[y][x].symbol = '~';
+                        grid[y][x].symbol = "~";
                         grid[y][x].color = Terminal::COLOR_BLUE;
                     } else {
-                        grid[y][x].symbol = '^';
-                        grid[y][x].color = "\033[90m";
+                        grid[y][x].symbol = "^";
+                        grid[y][x].color = "\033[90m"; 
                     }
                 }
             }
         }
     }
 
-    // 9. Local Grid Upscaling, POI Placement, and MST Roads
+    // 9. Local Grid Upscaling, Brooks, POI Placement, and MST Roads
     std::uniform_int_distribution<int> poi_count_dist(2, 4);
     std::uniform_real_distribution<float> noise_dist(0.0f, 1.0f);
-    int next_poi_id = 0; // Fix: Declared next_poi_id to resolve scope compilation error
+    std::uniform_int_distribution<int> local_x_dist(0, 69);
+    std::uniform_int_distribution<int> local_y_dist(0, 29);
+    
+    std::uniform_int_distribution<int> brook_count_dist(2, 4);
+    std::uniform_int_distribution<int> brook_len_dist(10, 25);
+    std::uniform_int_distribution<int> dir_dist(-1, 1);
+
+    int next_poi_id = 0; 
 
     for (auto& pair : regions) {
         Region& region = pair.second;
@@ -370,7 +375,7 @@ void WorldMap::GenerateWorld(unsigned int seed) {
         // Find macro bounding box for this specific region
         int min_mx = 200, max_mx = -1;
         int min_my = 200, max_my = -1;
-
+        
         for (int y = 0; y < 200; ++y) {
             for (int x = 0; x < 200; ++x) {
                 if (grid[y][x].region_id == region.id) {
@@ -382,7 +387,7 @@ void WorldMap::GenerateWorld(unsigned int seed) {
             }
         }
 
-        if (max_mx == -1) continue; // Safety guard for empty regions
+        if (max_mx == -1) continue; 
 
         float scale_x = static_cast<float>(max_mx - min_mx + 1) / 70.0f;
         float scale_y = static_cast<float>(max_my - min_my + 1) / 30.0f;
@@ -405,31 +410,54 @@ void WorldMap::GenerateWorld(unsigned int seed) {
                     ltile.color = mtile.color;
                     ltile.is_road = false;
 
-                    // Add organic terrain noise to make the upscaled area feel detailed
+                    // Organic terrain detail upscaling
                     if (noise_dist(gen) < 0.3f) {
                         switch(ltile.biome) {
-                            case Biome::Plains: ltile.symbol = ','; break;
-                            case Biome::Forest: ltile.symbol = 't'; break;
-                            case Biome::Hills: ltile.symbol = 'm'; break;
-                            case Biome::Mountains: ltile.symbol = 'A'; break;
-                            case Biome::Swamp: ltile.symbol = '='; break;
-                            case Biome::Desert: ltile.symbol = '_'; break;
+                            case Biome::Plains: ltile.symbol = ","; break;
+                            case Biome::Forest: ltile.symbol = "t"; break;
+                            case Biome::Hills: ltile.symbol = "m"; break;
+                            case Biome::Mountains: ltile.symbol = "A"; break;
+                            case Biome::Swamp: ltile.symbol = "="; break;
+                            case Biome::Desert: ltile.symbol = "_"; break;
                         }
                     } else {
                         ltile.symbol = mtile.symbol;
                     }
                 } else {
                     ltile.in_region = false;
-                    ltile.symbol = ' ';
-                    ltile.color = "\033[90m"; // Dark gray hash
+                    ltile.symbol = " ";
+                    ltile.color = "\033[90m";
                 }
             }
         }
 
-        // Place POIs on the local grid
+        // Generate Wandering Brooks
+        int num_brooks = brook_count_dist(gen);
+        for (int b = 0; b < num_brooks; ++b) {
+            int bx = local_x_dist(gen);
+            int by = local_y_dist(gen);
+            int length = brook_len_dist(gen);
+            int dir_x = dir_dist(gen);
+            int dir_y = dir_dist(gen);
+            if (dir_x == 0 && dir_y == 0) dir_x = 1;
+
+            for (int l = 0; l < length; ++l) {
+                if (bx >= 0 && bx < 70 && by >= 0 && by < 30) {
+                    LocalTile& btile = region.local_grid[by][bx];
+                    if (btile.in_region) {
+                        btile.symbol = "~";
+                        btile.color = Terminal::COLOR_BLUE;
+                    }
+                }
+                if (noise_dist(gen) < 0.2f) dir_x = dir_dist(gen);
+                if (noise_dist(gen) < 0.2f) dir_y = dir_dist(gen);
+                bx += dir_x;
+                by += dir_y;
+            }
+        }
+
+        // Place POIs on the local grid (Avoiding water/brooks)
         int num_pois = poi_count_dist(gen);
-        std::uniform_int_distribution<int> local_x_dist(0, 69);
-        std::uniform_int_distribution<int> local_y_dist(0, 29);
 
         for (int i = 0; i < num_pois; ++i) {
             int lx, ly;
@@ -441,7 +469,7 @@ void WorldMap::GenerateWorld(unsigned int seed) {
                 ly = local_y_dist(gen);
                 LocalTile& ltile = region.local_grid[ly][lx];
 
-                if (ltile.in_region && !ltile.is_road && ltile.symbol != 'O' && ltile.symbol != 'V') {
+                if (ltile.in_region && !ltile.is_road && ltile.symbol != "O" && ltile.symbol != "V" && ltile.symbol != "~") {
                     valid = true;
                 }
                 attempts++;
@@ -459,27 +487,47 @@ void WorldMap::GenerateWorld(unsigned int seed) {
             LocalTile& ltile = region.local_grid[ly][lx];
 
             if (i == 0) {
-                new_poi.symbol = 'O'; // Settlement
-                ltile.symbol = 'O';
+                new_poi.symbol = "O"; 
+                ltile.symbol = "O";
                 ltile.color = Terminal::COLOR_WHITE;
             } else {
-                new_poi.symbol = 'V'; // Dungeon
-                ltile.symbol = 'V';
+                new_poi.symbol = "V"; 
+                ltile.symbol = "V";
                 ltile.color = Terminal::COLOR_RED;
             }
 
-            // Mark the macro grid purely for macro rendering views
             grid[new_poi.macro_y][new_poi.macro_x].symbol = new_poi.symbol;
             grid[new_poi.macro_y][new_poi.macro_x].color = ltile.color;
 
             region.pois.push_back(new_poi);
         }
 
+        // Generate Fields around Settlement POIs
+        for (const auto& new_poi : region.pois) {
+            if (new_poi.symbol == "O") { 
+                for (int dy = -2; dy <= 2; ++dy) {
+                    for (int dx = -2; dx <= 2; ++dx) {
+                        if (dx * dx + dy * dy <= 6) { 
+                            int fx = new_poi.local_x + dx;
+                            int fy = new_poi.local_y + dy;
+                            if (fx >= 0 && fx < 70 && fy >= 0 && fy < 30) {
+                                LocalTile& ftile = region.local_grid[fy][fx];
+                                if (ftile.in_region && ftile.symbol != "O" && ftile.symbol != "V" && ftile.symbol != "~") {
+                                    ftile.symbol = "≈";
+                                    ftile.color = Terminal::COLOR_YELLOW;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Generate Roads using local coordinates
         if (region.pois.size() >= 2) {
             std::vector<size_t> connected;
             std::vector<size_t> unconnected;
-
+            
             connected.push_back(0);
             for (size_t i = 1; i < region.pois.size(); ++i) {
                 unconnected.push_back(i);
@@ -498,7 +546,7 @@ void WorldMap::GenerateWorld(unsigned int seed) {
                         float dx = static_cast<float>(region.pois[c].local_x - region.pois[u].local_x);
                         float dy = static_cast<float>(region.pois[c].local_y - region.pois[u].local_y);
                         float dist_val = std::sqrt(dx * dx + dy * dy);
-
+                        
                         if (dist_val < min_dist) {
                             min_dist = dist_val;
                             best_c = c;
@@ -522,8 +570,8 @@ void WorldMap::GenerateWorld(unsigned int seed) {
 
                 auto drawRoad = [&](int x, int y) {
                     LocalTile& ltile = region.local_grid[y][x];
-                    if (ltile.symbol != 'O' && ltile.symbol != 'V') {
-                        ltile.symbol = '+';
+                    if (ltile.symbol != "O" && ltile.symbol != "V") {
+                        ltile.symbol = "+";
                         ltile.color = Terminal::COLOR_YELLOW;
                         ltile.is_road = true;
                     }
