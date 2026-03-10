@@ -15,29 +15,6 @@ enum class Biome {
     Desert
 };
 
-// Point of Interest (Settlements, Dungeons, Quest Locations)
-struct POI {
-    int id;
-    int x;
-    int y;
-    char symbol;
-    std::vector<int> connected_pois;
-};
-
-// A sub-section of a Kingdom containing multiple POIs
-struct Region {
-    int id;
-    int kingdom_id;
-    std::vector<POI> pois;
-};
-
-// A major political entity made up of multiple Regions
-struct Kingdom {
-    int id;
-    Biome primary_biome;
-    std::vector<int> region_ids;
-};
-
 // Represents a single cell on the Continental map grid
 struct Tile {
     Biome biome;
@@ -46,6 +23,49 @@ struct Tile {
     char symbol = ' ';
     std::string color;
     bool is_road = false;
+};
+
+// Represents a single cell on the high-res Regional map grid
+struct LocalTile {
+    Biome biome;
+    char symbol = ' ';
+    std::string color;
+    bool is_road = false;
+    bool in_region = false;
+};
+
+// Point of Interest (Settlements, Dungeons, Quest Locations)
+struct POI {
+    int id;
+    int macro_x; // Coordinate on the 200x200 Continental Map
+    int macro_y; // Coordinate on the 200x200 Continental Map
+    int local_x; // Coordinate on the 70x30 Regional Map
+    int local_y; // Coordinate on the 70x30 Regional Map
+    char symbol;
+    std::vector<int> connected_pois;
+};
+
+// A sub-section of a Kingdom containing multiple POIs and its own high-res map
+struct Region {
+    int id;
+    int kingdom_id;
+    std::vector<POI> pois;
+
+    // 70x30 local grid initialized (30 rows, 70 columns)
+    std::vector<std::vector<LocalTile>> local_grid = std::vector<std::vector<LocalTile>>(30, std::vector<LocalTile>(70));
+};
+
+// A major political entity made up of multiple Regions
+struct Kingdom {
+    int id;
+    Biome primary_biome;
+    std::vector<int> region_ids;
+
+    // Bounding box for the Kingdom on the macro map
+    int min_x = 200;
+    int max_x = -1;
+    int min_y = 200;
+    int max_y = -1;
 };
 
 // The primary container for the macroscopic game world
