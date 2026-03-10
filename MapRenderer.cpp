@@ -117,7 +117,7 @@ void MapRenderer::RenderContinentalMap(const WorldMap& map, int player_kingdom_i
     std::cout.flush();
 }
 
-void MapRenderer::RenderKingdomMap(const WorldMap& map, int target_kingdom_id, int player_macro_x, int player_macro_y) {
+void MapRenderer::RenderKingdomMap(const WorldMap& map, int target_kingdom_id, int player_region_id) {
     Terminal::ClearScreen();
 
     auto it = map.kingdoms.find(target_kingdom_id);
@@ -127,13 +127,27 @@ void MapRenderer::RenderKingdomMap(const WorldMap& map, int target_kingdom_id, i
     int min_x = kingdom.min_x;
     int min_y = kingdom.min_y;
 
-    int player_region_id = -1;
-    if (player_macro_x >= 0 && player_macro_x < 200 && player_macro_y >= 0 && player_macro_y < 200) {
-        player_region_id = map.grid[player_macro_y][player_macro_x].region_id;
-    }
-
     const int viewportWidth = 70;
     const int viewportHeight = 30;
+
+    // Pre-calculate the geographical center of the player's region to place the '@'
+    long long pr_sum_x = 0, pr_sum_y = 0;
+    int pr_count = 0;
+    
+    if (player_region_id != -1) {
+        for (int y = 0; y < 200; ++y) {
+            for (int x = 0; x < 200; ++x) {
+                if (map.grid[y][x].region_id == player_region_id) {
+                    pr_sum_x += x;
+                    pr_sum_y += y;
+                    pr_count++;
+                }
+            }
+        }
+    }
+    
+    int pr_center_x = (pr_count > 0) ? (pr_sum_x / pr_count) : -1;
+    int pr_center_y = (pr_count > 0) ? (pr_sum_y / pr_count) : -1;
 
     for (int term_y = 0; term_y < viewportHeight; ++term_y) {
         for (int term_x = 0; term_x < viewportWidth; ++term_x) {
@@ -142,10 +156,10 @@ void MapRenderer::RenderKingdomMap(const WorldMap& map, int target_kingdom_id, i
             int map_x = min_x + term_x;
             int map_y = min_y + term_y;
 
-            // Strict ANSI wipe to eliminate background color bleed on subsequent iterations
+            // Strict ANSI wipe to eliminate background color bleed
             std::string base_format = "\033[0m";
 
-            if (map_x == player_macro_x && map_y == player_macro_y) {
+            if (map_x == pr_center_x && map_y == pr_center_y) {
                 Terminal::SetColor(base_format + Terminal::COLOR_WHITE, "\033[42m"); 
                 std::cout << '@';
                 continue;
@@ -173,10 +187,10 @@ void MapRenderer::RenderKingdomMap(const WorldMap& map, int target_kingdom_id, i
                         }
                     }
 
-                    // Dynamically highlight the specific region the player is inside
-                    std::string bg_format = "";
+                    // Explicitly set or clear the background highlight
+                    std::string bg_format = "\033[49m"; // Explicit default background
                     if (tile.region_id == player_region_id && player_region_id != -1) {
-                        bg_format = "\033[100m"; // Dark Gray Background
+                        bg_format = "\033[100m"; // Dark Gray Background for active region
                     }
 
                     std::string colors[] = {
@@ -185,21 +199,24 @@ void MapRenderer::RenderKingdomMap(const WorldMap& map, int target_kingdom_id, i
                         Terminal::COLOR_MAGENTA, Terminal::COLOR_CYAN, 
                         Terminal::COLOR_WHITE
                     };
-                    std::string region_color = colors[tile.region_id % 7];
+                    
+                    std::string fg_color = colors[tile.region_id % 7];
 
+                    // Removed the \033[7m inverse code which causes terminal state bleed.
+                    // Instead, use a darkened color or distinct foreground for the internal borders.
                     if (is_region_border) {
-                        Terminal::SetColor(base_format + "\033[7m" + region_color, bg_format);
+                        Terminal::SetColor(base_format + "\033[90m", bg_format); // Dark Gray text
                         std::cout << tile.symbol;
                     } else {
-                        Terminal::SetColor(base_format + region_color, bg_format);
+                        Terminal::SetColor(base_format + fg_color, bg_format);
                         std::cout << tile.symbol;
                     }
                 } else {
-                    Terminal::SetColor(base_format + "\033[90m", ""); 
+                    Terminal::SetColor(base_format + "\033[90m", "\033[49m"); 
                     std::cout << ' ';
                 }
             } else {
-                Terminal::SetColor(base_format + "\033[90m", "");
+                Terminal::SetColor(base_format + "\033[90m", "\033[49m");
                 std::cout << ' ';
             }
         }
